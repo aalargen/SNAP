@@ -13,7 +13,16 @@ setup(
         'peewee',
         'fire',
         'psycopg2-binary',
-        'pybtex'
+        'pybtex',
+        'gdown',
+        'pandas',
+        'pillow',
+        'fastparquet',
+        'torch',
+        'torchvision',
+        'torchaudio',
+        'matplotlib',
+        'jax',
     ],
 )
 
