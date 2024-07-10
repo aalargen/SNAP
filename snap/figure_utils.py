@@ -5,8 +5,8 @@ import matplotlib as mpl
 
 DATA_ROOT = './data/'
 
-
-def get_processed_data_figs(region_list, pooling_list, trained=True, exclude_models=None):
+def get_processed_data_figs(region_list, pooling_list, trained=True, 
+                            exclude_models=None, data_root=DATA_ROOT):
     """
     Loads in the processed data and adds a few additional keys to all_reg_hist
     """
@@ -19,7 +19,7 @@ def get_processed_data_figs(region_list, pooling_list, trained=True, exclude_mod
     all_data_kwargs = {key: {key_pool: {} for key_pool in pooling_list} for key in region_list}
     for region in region_list:
         for pooling in pooling_list:
-            processed_data_name = DATA_ROOT+'processed/'
+            processed_data_name = data_root+'processed/'
             processed_data_name += f'{region}_{pooling}_{pretrained[trained]}.npz'
 
             data = np.load(processed_data_name, allow_pickle=True)

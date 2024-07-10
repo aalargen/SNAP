@@ -455,7 +455,7 @@ def get_robustness(model_name, pretrained=True, device='cuda'):
     chkp_path = os.path.join(torch.hub.get_dir(), f"checkpoints/{file_name}")
 
     if not os.path.exists(chkp_path):
-        os.makedirs(os.path.dirname(chkp_path))
+        os.makedirs(os.path.dirname(chkp_path), exist_ok=True)
         os.system(f"wget -O {chkp_path} {url}")
     weights = torch.load(chkp_path, map_location=device)
 
