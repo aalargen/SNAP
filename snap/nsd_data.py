@@ -18,7 +18,7 @@ import os
 ROI_names = ['V1v', 'V2v', 'V3v', 'V1d', 'V2d', 'V3d', 'hV4', 'OFA', 'FFA-1',
    'FFA-2', 'OWFA', 'VWFA-1', 'VWFA-2', 'EBA', 'FBA-1', 'FBA-2',
    'OPA', 'PPA', 'RSC']
-ROI_groups = ['Early Visual Cortex', 'Face Processing', 'Word Processing',
+ROI_groups = ['V1', 'V2', 'V3', 'V4', 'Face Processing', 'Word Processing',
    'Body Processing', 'Scene Processing']
 ROI_levels = ['Early Visual Cortex', 'Mid to High Level Visual Cortex']
 
@@ -126,6 +126,12 @@ def get_nsd(data_path, region, dataset='demo'):
 
    # rename ROI for saving purposes
    metadata['roi_level'] = metadata['roi_level'].replace('Mid / High Level Visual Cortex', 'Mid to High Level Visual Cortex')
+
+   # more renaming ROIS
+   metadata.loc[metadata['roi_name'].str.contains('V1'), 'roi_group'] = 'V1'
+   metadata.loc[metadata['roi_name'].str.contains('V2'), 'roi_group'] = 'V2'
+   metadata.loc[metadata['roi_name'].str.contains('V3'), 'roi_group'] = 'V3'
+   metadata.loc[metadata['roi_name'].str.contains('V4'), 'roi_group'] = 'V4'
 
    # ROI selectivity 
    if region:
