@@ -31,7 +31,7 @@ def extract_tar(tar_file, dest_path, delete = True):
 
 
 def get_neural_data(region=None, loader_kwargs=None, image_transforms=None,
-                    data_path=None, dataset='demo'):
+                    data_path=None, dataset='demo', num_samples=None):
    """
    Args:
       ROI (list of str),
@@ -64,7 +64,7 @@ def get_neural_data(region=None, loader_kwargs=None, image_transforms=None,
 
    if region: assert region in all_ROIs, f'{region} is not a valid ROI'
    
-   response_data, stimulus_data, _ = get_nsd(data_path, region, dataset)
+   response_data, stimulus_data, _ = get_nsd(data_path, region, dataset, num_samples)
 
    if loader_kwargs is None:
       loader_kwargs = {'batch_size': 128,
@@ -95,7 +95,7 @@ def get_neural_data(region=None, loader_kwargs=None, image_transforms=None,
    
 
 
-def get_nsd(data_path, region, dataset='demo'):
+def get_nsd(data_path, region, dataset='demo', num_samples=None):
    """
    returns dataframes with NSD data inside
    Adapted from DeepNSD GitHub repo
@@ -123,6 +123,11 @@ def get_nsd(data_path, region, dataset='demo'):
    
    response_data = pd.read_parquet(response_path).set_index('voxel_id')
    metadata = pd.read_csv(metadata_path).set_index('voxel_id')
+
+   if (num_samples is not None) and (num_samples < stimulus_data.shape[0]):
+      stimulus_data = stimulus_data.sample(n=num_samples)
+      samples = stimulus_data['index'].astype(str)
+      response_data = response_data.loc[:, samples]
 
    # rename ROI for saving purposes
    metadata['roi_level'] = metadata['roi_level'].replace('Mid / High Level Visual Cortex', 'Mid to High Level Visual Cortex')
