@@ -23,6 +23,11 @@ setup(
         'torchaudio',
         'matplotlib',
         'jax',
+        'seaborn',
+        'numpy',
+        'scipy',
+        'tqdm',
+        'requests'
     ],
 )
 
