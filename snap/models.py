@@ -1,5 +1,7 @@
 import os
 import torch
+import torch.nn as nn
+from collections import OrderedDict
 from torchvision.models import (alexnet, AlexNet_Weights,
                                 vgg11, VGG11_Weights,
                                 vgg16, VGG16_Weights,
@@ -73,6 +75,16 @@ vit_base_pt_layers = [f'encoder.layers.encoder_layer_{i}' for i in range(12)]
 vit_large_pt_layers = [f'encoder.layers.encoder_layer_{i}' for i in range(24)]
 vit_huge_pt_layers = [f'encoder.layers.encoder_layer_{i}' for i in range(32)]
 
+model_names_equi = [
+    'MMCR_lmda_0001_1'  , 'MMCR_lmda_01_1'  , 'MMCR_lmda_02_1'  , 'MMCR_lmda_03_1'  , 'MMCR_lmda_04_1'  , 'MMCR_lmda_05_1',
+    'SimCLR_lmda_0001_1', 'SimCLR_lmda_01_1', 'SimCLR_lmda_02_1', 'SimCLR_lmda_03_1', 'SimCLR_lmda_04_1', 'SimCLR_lmda_05_1', 
+    'Barlow_lmda_0001_1', 'Barlow_lmda_01_1', 'Barlow_lmda_02_1', 'Barlow_lmda_03_1', 'Barlow_lmda_04_1', 'Barlow_lmda_05_1' 
+     
+]
+
+model_names_inv = [
+    'MMCR_lmda_00_2', 'SimCLR_lmda_00_1', 'Barlow_lmda_00_1', 
+]
 
 def get_model(name, pretrained=False, device='cuda', **kwargs):
 
@@ -202,6 +214,13 @@ def get_model(name, pretrained=False, device='cuda', **kwargs):
         identifier = name + ('|imagenet_trained' if pretrained else '|untrained')
         assert name in ['wide_resnet50_2', 'wide_resnet101_2']
         model, layers = get_wideresnet(name, pretrained=pretrained)
+
+    elif 'lmda' in name:
+        if not pretrained:
+            raise Exception(f'Untrained version of {name} is just resnet50')
+        identifier = name + '|imagenet_trained'
+        assert name in model_names_equi + model_names_inv
+        model, layers = get_mosaic(name, device=device)
 
     elif name == 'barlowtwins':
         identifier = name + ('|imagenet_trained' if pretrained else '|untrained')
@@ -490,4 +509,60 @@ def get_moco_resnet50(pretrained=True):
         missing_keys, unexpected_keys = model.load_state_dict(head_dict, strict=False)
         assert missing_keys == [] and unexpected_keys == []
 
+    return model, layers
+
+
+def build_specs_from_name(name):
+    model_path_prefix = "/mnt/ceph/users/tyerxa/equi_proj/training_checkpoints/fresh/"
+    lmda_dict = {
+        '00': 0.0,
+        '0001': 0.001,
+        '001': 0.01,
+        '01': 0.1,
+        '02': 0.2,
+        '03': 0.3,
+        '04': 0.4,
+        '05': 0.5,
+    }
+    name_parts = name.split("_")
+    objective = name_parts[0]
+    if 'MMCR' in objective:
+        objective = 'MMCR_Momentum'
+    lmda = lmda_dict[name_parts[-2]]
+    run = name_parts[-1]
+
+    if lmda != 0.0:
+        path = model_path_prefix + 'paired/' + f'lmda_{lmda}/' + objective + '_' + run + '/latest-rank0'
+    else:
+        path = model_path_prefix + 'vanilla/'  + objective + '_' + run + '/latest-rank0' 
+
+
+    return objective, lmda, run, path
+
+
+def load_mosaic_model(model_path, to_cuda=True):
+    model = resnet50()
+    model.fc = nn.Identity()
+    sd = torch.load(model_path, map_location="cpu")["state"]["model"]
+    new_sd = OrderedDict()
+    for k, v in sd.items():
+        # skip projector, momentum networks, and fully connected
+        #if "g." in k or "mom_" in k or "fc" in k or '.g_' in k:
+        if ".f." not in k:
+            continue
+        parts = k.split(".")
+        idx = parts.index("f")
+        new_k = ".".join(parts[idx + 1 :])
+        new_sd[new_k] = v
+    model.load_state_dict(new_sd, strict=True)
+    if to_cuda:
+        return model.eval().cuda()
+    return model.eval()
+
+
+def get_mosaic(model_name, device='cuda'):
+    _, _, _, path = build_specs_from_name(model_name)
+    to_cuda = device == 'cuda'
+    model = load_mosaic_model(path, to_cuda)
+    layers = resnet50_pt_layers
     return model, layers
