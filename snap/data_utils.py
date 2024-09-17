@@ -108,7 +108,7 @@ def gather_data(data_root, activation_pooling, regionNames, modelNames, pretrain
                 dfs = []
                 for region in regionNames:
                     for model_name in modelNames:
-                        for trained in [True, False]:
+                        for trained in pretrained.keys():
                             try:
                                 identifier = [pooling, region, model_name, pretrained[trained]]
                                 data_fname = data_dir + f"/{region}_data_{model_name}_{pretrained[trained]}.npz"
