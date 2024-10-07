@@ -138,13 +138,13 @@ def gen_error_theory(eigs, weights, reg, pvals=None):
 
     for i, p in enumerate(pvals):
         mode_err = prefactor_gen[i] * (1 / (p*eigs + kappa[i])**2)
-        dyn_weights = mode_err[:, None] * weights**2 / weights_sq.sum()
+        dyn_weights = mode_err[:, None] * weights**2 / weights_sq.sum() # should be done earlier (confusing this way)
 
         for j in range(C):
             # Normalize by L2 norm of target
             gen_err = (dyn_weights[:, j]).sum()
             tr_err = prefactor_tr[i] * gen_err
-            r2_score = 1 - gen_err
+            r2_score = 1 - gen_err # TODO: get rid of this!
 
             errors['gen_theory'][i, j] = gen_err
             errors['tr_theory'][i, j] = tr_err
@@ -215,7 +215,8 @@ def regression(feat, y, pvals=None, cent=False, num_trials=3, reg=None, **kwargs
             #if first trial, use RidgeCV to get an alpha
             if best_alpha is None:
                 ridge_cv = RidgeCVMod(alphas=alphas, store_cv_values=False,
-                                      alpha_per_target=False, scoring='pearson_r')
+                                      alpha_per_target=False, scoring='pearson_r',
+                                      fit_intercept=False)
                 ridge_cv.fit(np.array(feat_tr), np.array(y_tr))
                 best_alpha = ridge_cv.alpha_
                 print(f'\n N: {N}, p: {p}, Best Alpha: {best_alpha}')

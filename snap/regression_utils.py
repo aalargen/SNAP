@@ -140,7 +140,7 @@ def gen_error_theory(eigs, weights, reg, pvals=None, **kwargs):
             # Normalize by L2 norm of target
             gen_err = (dyn_weights[:, j]).sum()
             tr_err = prefactor_tr[i] * gen_err
-            r2_score = 1 - gen_err
+            r2_score = 1 - gen_err # TODO: get rid of this!
 
             errors['gen_theory'][i, j] = gen_err
             errors['tr_theory'][i, j] = tr_err
@@ -158,10 +158,11 @@ def regression(feat, y, eigs, weights, pvals=None, cent=False, num_points=5, num
 
     # To extract the learning curve divide samples into 10
     if pvals is None:
-        pvals = np.concatenate([np.logspace(np.log10(5), np.log10(P-2), 5),
-                                np.arange(1, 10)*0.1*P]
-                               ).astype(int)
-        pvals.sort()
+        # pvals = np.concatenate([np.logspace(np.log10(5), np.log10(P-2), 5),
+        #                         np.arange(1, 10)*0.1*P]
+        #                        ).astype(int)
+        # pvals.sort()
+        pvals = [int(.6*P), int(.8*P)]
 
     if type(reg) not in [list, np.ndarray]:
         reg = [reg] * len(pvals)
