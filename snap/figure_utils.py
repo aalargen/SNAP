@@ -41,6 +41,10 @@ def get_processed_data_figs(region_list, pooling_list, trained=True,
 
             all_reg_hist[region][pooling]['layer_depth_normalized'] \
                 = [layer_norm_idx_dict[ml] for ml in all_reg_hist[region][pooling]['models_plus_layer']]
+            
+            all_reg_hist[region][pooling]['log_eff_regs'] = np.log10(all_reg_hist[region][pooling]['eff_regs'])
+            
+            all_reg_hist[region][pooling]['log_regs'] = np.log10(all_reg_hist[region][pooling]['regs'])
 
             # Add generalization error for all p values to all_reg_hist
             gen_err_dict = {}
@@ -137,11 +141,11 @@ def plot_region_contours(all_reg_hist,
                                              vmin=c_map_min_contours_region)
 
         # Extract the data for the scatter plots
-        r_wtilda = all_models['dyn_weight_rads']
-        sqrtd_wtilda = all_models['dyn_tads']
+        r_wtilda = all_models['radius_theory']
+        sqrtd_wtilda = np.sqrt(all_models['dimension_theory'])
 
         # Just a sanity check that we are plotting the right thing
-        pval = all_models['pvals_mode'][:, p_idx]
+        pval = all_models['pvals'][:, p_idx]
         assert len(set(pval)) == 1, 'Detected Multiple Sample Values!'
 
         # Create the first scatter plot

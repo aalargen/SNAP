@@ -118,6 +118,7 @@ def gen_error_theory(eigs, weights, reg, pvals=None):
     # Absolute value of eigs improves numerical stability
     eigs = np.abs(eigs)
     weights_sq = (weights**2).sum(-1)
+    alignment = weights**2 / weights_sq.sum()
 
     # Solve for self-consistent equation
     kappa, gamma, eff_regs = solve_kappa_gamma(pvals, reg, eigs, weights_sq)
@@ -130,26 +131,37 @@ def gen_error_theory(eigs, weights, reg, pvals=None):
               'kappa': kappa,
               'gamma': gamma,
               'eff_regs': eff_regs,
-              'mode_err_theory': np.zeros((len(pvals), len(eigs))),
+              'E_i': np.zeros((len(pvals), len(eigs))),
               'gen_theory': np.zeros((len(pvals), C)),
               'tr_theory': np.zeros((len(pvals), C)),
-              'r2_theory': np.zeros((len(pvals), C))
+              'radius_theory': np.zeros((len(pvals))),
+              'dimension_theory': np.zeros((len(pvals))),
+              'error_modes_theory': np.zeros((len(pvals), P, C)),
               }
 
     for i, p in enumerate(pvals):
-        mode_err = prefactor_gen[i] * (1 / (p*eigs + kappa[i])**2)
-        dyn_weights = mode_err[:, None] * weights**2 / weights_sq.sum() # should be done earlier (confusing this way)
+        E_i = prefactor_gen[i] * (1 / (p*eigs + kappa[i])**2)
+        error_mode = E_i[:, None] * alignment 
 
         for j in range(C):
             # Normalize by L2 norm of target
-            gen_err = (dyn_weights[:, j]).sum()
+            gen_err = (error_mode[:, j]).sum() # total error per voxel
             tr_err = prefactor_tr[i] * gen_err
-            r2_score = 1 - gen_err # TODO: get rid of this!
 
             errors['gen_theory'][i, j] = gen_err
             errors['tr_theory'][i, j] = tr_err
-            errors['r2_theory'][i, j] = r2_score
-        errors['mode_err_theory'][i] = mode_err
+            
+        errors['E_i'][i] = E_i
+        errors['error_modes_theory'][i] = error_mode
+        
+        # find radius and dimension
+        sum_sq_err_modes = np.square(error_mode).sum()
+        sum_err_modes_sq = np.square(errors['gen_theory'][i].sum(-1))
+        radius = np.sqrt(sum_sq_err_modes)
+        dimension = sum_err_modes_sq/sum_sq_err_modes
+        
+        errors['radius_theory'][i] = radius
+        errors['dimension_theory'][i] = dimension
 
     return errors
 
@@ -193,7 +205,7 @@ def regression(feat, y, pvals=None, cent=False, num_trials=3, reg=None, **kwargs
               }
     
     if reg is None:
-        alphas = np.logspace(-15, 10, 27).tolist() # do ?? steps to get between too
+        alphas = np.logspace(-15, 10, 26).tolist() # do 51 steps to get between too
     elif isinstance(reg, (int, float)):
         alphas = [reg]
     else:
@@ -285,7 +297,7 @@ def regression(feat, y, pvals=None, cent=False, num_trials=3, reg=None, **kwargs
 
 
 @torch.no_grad()
-def regression_metric(activations, labels, spectrum_dict, **kwargs):
+def regression_metric(activations, labels, spectrum_dict, cent=True, uncent=False, **kwargs):
 
     assert type(labels) is dict, "labels should be provided as a dict (e.g. {'classes': classes})"
     assert labels.get('responses') is not None
@@ -294,25 +306,27 @@ def regression_metric(activations, labels, spectrum_dict, **kwargs):
     reg_responses_cent = {layer_key: {} for layer_key in activations.keys()}
     for layer_key, layer_act in tqdm(activations.items(), total=len(activations), desc='Layer'):
         for label_key, y in labels.items():
-            # Uncentered regression
-            eigs = spectrum_dict['uncent'][layer_key]['eigs']
-            weights = spectrum_dict['uncent'][layer_key]['weights'][label_key]
-            errors = regression(layer_act, y, cent=False, **kwargs)
-            reg = errors['reg']
-            pvals = errors['pvals']
-            theory = gen_error_theory(eigs, weights, reg, pvals=pvals)
-            errors |= theory
-            reg_responses_uncent[layer_key][label_key] = errors
+            if uncent:
+                # Uncentered regression
+                eigs = spectrum_dict['uncent'][layer_key]['eigs']
+                weights = spectrum_dict['uncent'][layer_key]['weights'][label_key]
+                errors = regression(layer_act, y, cent=False, **kwargs)
+                reg = errors['reg']
+                pvals = errors['pvals']
+                theory = gen_error_theory(eigs, weights, reg, pvals=pvals)
+                errors |= theory
+                reg_responses_uncent[layer_key][label_key] = errors
 
-            # Centered regression
-            eigs = spectrum_dict['cent'][layer_key]['eigs']
-            weights = spectrum_dict['cent'][layer_key]['weights'][label_key]
-            errors = regression(layer_act, y, cent=True, **kwargs)
-            reg = errors['reg']
-            pvals = errors['pvals']
-            theory = gen_error_theory(eigs, weights, reg, pvals=pvals)
-            errors |= theory
-            reg_responses_cent[layer_key][label_key] = errors
+            if cent:
+                # Centered regression
+                eigs = spectrum_dict['cent'][layer_key]['eigs']
+                weights = spectrum_dict['cent'][layer_key]['weights'][label_key]
+                errors = regression(layer_act, y, cent=True, **kwargs)
+                reg = errors['reg']
+                pvals = errors['pvals']
+                theory = gen_error_theory(eigs, weights, reg, pvals=pvals)
+                errors |= theory
+                reg_responses_cent[layer_key][label_key] = errors
 
     return {'uncent': reg_responses_uncent,
             'cent': reg_responses_cent}

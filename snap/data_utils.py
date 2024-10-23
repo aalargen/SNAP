@@ -3,6 +3,7 @@ import warnings
 import os
 import numpy as np
 import pandas as pd
+import snap.regression_utils_dd as reg_utils
 
 
 def create_dataframe(model_dict, identifier, centered=True):
@@ -205,6 +206,7 @@ def process_model(df, eff_dim_cutoff=0, threshold=0.9999):
 
         # Experiment curves #
         pvals = model_data.responses_pvals[:-2]
+        regs = model_data.responses_reg[:-2]
         P = model_data.responses_P[:-2]
         N = model_data.responses_N[:-2]
         C = model_data.responses_C[:-2]
@@ -236,8 +238,11 @@ def process_model(df, eff_dim_cutoff=0, threshold=0.9999):
         # Sum over neurons/classes
         gen_theory = model_data.responses_gen_theory[:-2].sum(-1)
         tr_theory = model_data.responses_tr_theory[:-2].sum(-1)
-        mode_errs = model_data.responses_mode_err_theory[:-2]
+        E_i = model_data.responses_E_i[:-2]
         eff_regs = model_data.responses_eff_regs[:-2]
+        error_modes = model_data.responses_error_modes_theory[:-2].sum(-1)
+        radius_theory = model_data.responses_radius_theory[:-2]
+        dimension_theory = model_data.responses_dimension_theory[:-2]
 
         # Min Gen Error, Max Train Error #
         min_gen_errs = gen_errs[:, :-1].min(-1)
@@ -319,13 +324,14 @@ def process_model(df, eff_dim_cutoff=0, threshold=0.9999):
                      'task_eds', 'cum_task_eds',
                      'feat_dims', 'task_dims',
 
-                     'pvals', 'P', 'N', 'C',
+                     'pvals', 'regs', 'P', 'N', 'C',
                      'gen_errs', 'tr_errs', 'test_errs',
                      'gen_norm', 'tr_norm', 'test_norm',
                      'pearson_gen', 'pearson_tr', 'pearson_test',
 
                      'pvals_theory', 'gen_theory', 'tr_theory',
-                     'mode_errs', 'eff_regs',
+                     'E_i', 'eff_regs',
+                     'error_modes_theory', 'radius_theory', 'dimension_theory',
 
                      'min_gen_errs', 'max_tr_errs',
 
@@ -343,13 +349,14 @@ def process_model(df, eff_dim_cutoff=0, threshold=0.9999):
                      task_eds, cum_task_eds,
                      feat_dims, task_dims,
 
-                     pvals, P, N, C,
+                     pvals, regs, P, N, C,
                      gen_errs, tr_errs, test_errs,
                      gen_norm, tr_norm, test_norm,
                      pearson_gen, pearson_tr, pearson_test,
 
                      pvals_theory, gen_theory, tr_theory,
-                     mode_errs, eff_regs,
+                     E_i, eff_regs,
+                     error_modes, radius_theory, dimension_theory,
 
                      min_gen_errs, max_tr_errs,
 
@@ -357,8 +364,6 @@ def process_model(df, eff_dim_cutoff=0, threshold=0.9999):
                      )
 
         model_reg_dict[model[2]] = {key: val for key, val in zip(dict_keys, dict_vals)}
-        model_reg_dict[model[2]] |= compute_mode_errs(eigs, weights, pvals,
-                                                      threshold, reg=1e-14)
 
     return model_reg_dict
 
@@ -381,7 +386,7 @@ def get_all_data(process_fn, sort_coord, trained, region_list, pooling_list,
         for pooling in pooling_list:
             pooling_data = processed_data[pooling]
             models_data_keys = ['models', 'layers',
-                                'ranks_eig', 'ranks_weight',
+                                # 'ranks_eig', 'ranks_weight',
                                 'eds', 'cum_eds',
                                 'tads', 'cum_tads',
                                 'task_eds', 'cum_task_eds',
@@ -389,9 +394,11 @@ def get_all_data(process_fn, sort_coord, trained, region_list, pooling_list,
                                 'min_gen_errs', 'max_tr_errs',
                                 'final_scores',
 
-                                'pvals_mode',
-                                'dyn_tads', 'dyn_eds', 'dyn_null_eds',
-                                'dyn_weight_rads', 'dyn_eig_rads', 'dyn_null_rads',]
+                                'pvals',
+                                'dimension_theory',
+                                'radius_theory', 
+                                'eff_regs',
+                                'regs']
             models_data = {key: [] for key in models_data_keys}
 
             # Collect all data
@@ -418,56 +425,3 @@ def get_all_data(process_fn, sort_coord, trained, region_list, pooling_list,
         all_processed_data[region] = processed_data
 
     return all_reg_hist, all_processed_data
-
-
-def compute_mode_errs(eigs, weights, pvals, threshold=0.99, reg=1e-14):
-    import snap.regression_utils as reg_utils
-
-    if len(eigs.shape) == 1:
-        eigs, weights, pvals = [val[None, :] for val in [eigs, weights, pvals]]
-
-    return_keys = ['pvals_mode', 'mode_errs',
-                   'dyn_weights', 'dyn_eigs', 'dyn_nulls',
-                   'dyn_tads', 'dyn_eds', 'dyn_null_eds',
-                   'dyn_weight_rads', 'dyn_eig_rads', 'dyn_null_rads',
-                   'ranks_eig', 'ranks_weight']
-    returns = {key: [] for key in return_keys}
-
-    for eig, weight, pval in zip(eigs, weights, pvals):
-
-        theory = reg_utils.gen_error_theory(eig, weight, reg, pval)
-        mode_err = theory['mode_err_theory']
-
-        weight_sq = (weight**2).sum(-1)
-        dyn_weight = mode_err * weight_sq[None, :]
-        dyn_eig = mode_err * eig[None, :]
-        dyn_null = mode_err
-
-        assert np.allclose(eig.sum(), 1) and np.allclose(weight_sq.sum(), 1)
-        assert np.allclose(theory['gen_theory'].sum(-1), dyn_weight.sum(-1))
-
-        returns['pvals_mode'] += [pval]
-        returns['mode_errs'] += [mode_err]
-
-        returns['dyn_weights'] += [dyn_weight]
-        returns['dyn_eigs'] += [dyn_eig]
-        returns['dyn_nulls'] += [dyn_null]
-
-        returns['dyn_tads'] += [dyn_weight.sum(-1)/np.linalg.norm(dyn_weight, axis=1)]
-        returns['dyn_eds'] += [dyn_eig.sum(-1)/np.linalg.norm(dyn_eig, axis=1)]
-        returns['dyn_null_eds'] += [dyn_null.sum(-1)/np.linalg.norm(dyn_null, axis=1)]
-
-        returns['dyn_weight_rads'] += [np.linalg.norm(dyn_weight, axis=1)]
-        returns['dyn_eig_rads'] += [np.linalg.norm(dyn_eig, axis=1)]
-        returns['dyn_null_rads'] += [np.linalg.norm(dyn_null, axis=1)]
-
-        # Compute how many modes are learnable
-        # First compute the effective rank based on threshold
-        rank_eig, rank_weight = mode_threshold(eig, threshold), mode_threshold(weight_sq, threshold)
-
-        returns['ranks_eig'] += [rank_eig]
-        returns['ranks_weight'] += [rank_weight]
-
-    returns = {key: np.array(val).squeeze() for key, val in returns.items()}
-
-    return returns
