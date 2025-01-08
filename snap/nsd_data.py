@@ -31,7 +31,8 @@ def extract_tar(tar_file, dest_path, delete = True):
 
 
 def get_neural_data(region=None, loader_kwargs=None, image_transforms=None,
-                    data_path=None, dataset='demo', num_samples=None):
+                    data_path=None, dataset='demo', num_samples=None, 
+                    num_voxels=None, shuffle_images=False):
    """
    Args:
       ROI (list of str),
@@ -51,6 +52,12 @@ def get_neural_data(region=None, loader_kwargs=None, image_transforms=None,
       dataset (str)
          name of dataset in data_path to use. dataset directory name should be in the
          form of "natural_scenes_{dataset}"
+      num_samples (int|None)
+         number of images to use voxel data from
+      num_voxels (int|None)
+         number of voxels to get data from
+      shuffle_images (boolean)
+         shuffles the image data when true
    
    Returns:
       data_loader_neural (torch.utils.data.DataLoader)
@@ -64,7 +71,7 @@ def get_neural_data(region=None, loader_kwargs=None, image_transforms=None,
 
    if region: assert region in all_ROIs, f'{region} is not a valid ROI'
    
-   response_data, stimulus_data, _ = get_nsd(data_path, region, dataset, num_samples)
+   response_data, stimulus_data, _ = get_nsd(data_path, region, dataset, num_samples, num_voxels)
 
    if loader_kwargs is None:
       loader_kwargs = {'batch_size': 128,
@@ -83,6 +90,9 @@ def get_neural_data(region=None, loader_kwargs=None, image_transforms=None,
       transform = image_transforms
 
    image_paths = stimulus_data.image_path
+   if shuffle_images:
+         image_paths = image_paths.sample(frac=1, random_state=0).reset_index(drop=True)
+   
    responses = [response_data[col].to_numpy() for col in response_data.columns]
    ds = NSDImageDataset(image_paths, responses, transform)
    dataloader_neural = DataLoader(ds, **loader_kwargs)
@@ -95,7 +105,7 @@ def get_neural_data(region=None, loader_kwargs=None, image_transforms=None,
    
 
 
-def get_nsd(data_path, region, dataset='demo', num_samples=None):
+def get_nsd(data_path, region=None, dataset='demo', num_samples=None, num_voxels=None):
    """
    returns dataframes with NSD data inside
    Adapted from DeepNSD GitHub repo
@@ -132,13 +142,15 @@ def get_nsd(data_path, region, dataset='demo', num_samples=None):
    # rename ROI for saving purposes
    metadata['roi_level'] = metadata['roi_level'].replace('Mid / High Level Visual Cortex', 'Mid to High Level Visual Cortex')
 
-   # more renaming ROIS
    metadata.loc[metadata['roi_name'].str.contains('V1'), 'roi_group'] = 'V1'
    metadata.loc[metadata['roi_name'].str.contains('V2'), 'roi_group'] = 'V2'
    metadata.loc[metadata['roi_name'].str.contains('V3'), 'roi_group'] = 'V3'
    metadata.loc[metadata['roi_name'].str.contains('V4'), 'roi_group'] = 'V4'
 
-   # ROI selectivity 
+   # Reliability selection
+   metadata = metadata[metadata['voxel_reliability'] > 0.2]
+
+   # ROI selection
    if region:
       if region in ROI_names:
          metadata = metadata[metadata['roi_name'] == region]
@@ -147,8 +159,12 @@ def get_nsd(data_path, region, dataset='demo', num_samples=None):
       else:
          metadata = metadata[metadata['roi_level'] == region]
 
-      voxel_ids = metadata.index
-      response_data = response_data.loc[voxel_ids]
+   # this is mostly for sanity checks, so returns most reliable voxels instead of random sample
+   if num_voxels is not None and num_voxels < metadata.shape[0]:
+      metadata = metadata.nlargest(num_voxels, 'voxel_reliability')
+      
+   voxel_ids = metadata.index
+   response_data = response_data.loc[voxel_ids]
       
    stimulus_data = stimulus_data.set_index('image_id').loc[response_data.columns].reset_index()
    stimulus_data['image_path'] = image_root + '/' + stimulus_data.image_name

@@ -12,6 +12,8 @@ from sklearn.linear_model._base import _preprocess_data
 
 from sklearn.metrics import explained_variance_score
 from scipy.stats import pearsonr
+from scipy.linalg import norm
+from scipy import sparse
 
 pearsonr_vec = np.vectorize(pearsonr, signature='(n),(n)->(),()')
 
@@ -19,6 +21,15 @@ def pearson_r_score(y_true, y_pred, multioutput=None):
     y_true_ = y_true.transpose()
     y_pred_ = y_pred.transpose()
     return(pearsonr_vec(y_true_, y_pred_)[0])
+
+def normalized_prediction_error(y_true, y_pred):
+    """
+    normalized neural prediction error as described
+    in 'A Spectral Theory of Neural Prediction and Alignment' 
+    """
+    numerator = norm(y_pred-y_true)**2
+    denominator = norm(y_true)**2
+    return numerator/denominator
 
 class _RidgeGCVMod(_RidgeGCV):
     """Ridge regression with built-in Leave-one-out Cross-Validation."""
@@ -100,8 +111,8 @@ class _RidgeGCVMod(_RidgeGCV):
 
         X_mean, *decomposition = decompose(X, y, sqrt_sw)
 
-        if self.scoring not in ['pearson_r', 'explained_variance']:
-            raise ValueError("modified RidgeCV scoring requires one of ['pearson_r','explained_variance']")
+        if self.scoring not in ['pearson_r', 'explained_variance', 'normalized_prediction_error']:
+            raise ValueError("modified RidgeCV scoring requires one of ['pearson_r','explained_variance','normalized_prediction_error']")
 
         n_y = 1 if len(y.shape) == 1 else y.shape[1]
         n_alphas = 1 if np.ndim(self.alphas) == 0 else len(self.alphas)
@@ -120,13 +131,17 @@ class _RidgeGCVMod(_RidgeGCV):
             if self.alpha_per_target:
                 if self.scoring == 'pearson_r':
                     alpha_score = pearson_r_score(y, predictions)
-                if self.scoring == 'explained_variance':
+                elif self.scoring == 'explained_variance':
                     alpha_score = explained_variance_score(y, predictions, multioutput = 'raw_values') 
+                elif self.scoring == 'normalized_prediction_error':
+                    alpha_score = normalized_prediction_error(y, predictions)
             else:
                 if self.scoring == 'pearson_r':
                     alpha_score = pearson_r_score(y, predictions).mean()
                 if self.scoring == 'explained_variance':
                     alpha_score = explained_variance_score(y, predictions, multioutput = 'uniform_average')
+                elif self.scoring == 'normalized_prediction_error':
+                    alpha_score = normalized_prediction_error(y, predictions)
 
             # Keep track of the best model
             if best_score is None: 

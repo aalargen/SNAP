@@ -167,14 +167,16 @@ def gen_error_theory(eigs, weights, reg, pvals=None):
 
 
 @torch.no_grad()
-def regression(feat, y, pvals=None, cent=False, num_trials=3, reg=None, **kwargs):
+def regression(feat, y, pvals=None, cent=False, 
+               num_trials=3, reg=None, alpha_per_target=False, **kwargs):
 
     P, N = feat.shape
     C = y.shape[-1]
 
-    # To extract the learning curve divide samples into 10
     if pvals is None:
         pvals = [int(.6*P), int(.8*P)]
+    elif isinstance(pvals, (int, float)):
+        pvals = [pvals]
 
     if cent:
         y -= y.mean(0, keepdim=True)
@@ -227,7 +229,7 @@ def regression(feat, y, pvals=None, cent=False, num_trials=3, reg=None, **kwargs
             #if first trial, use RidgeCV to get an alpha
             if best_alpha is None:
                 ridge_cv = RidgeCVMod(alphas=alphas, store_cv_values=False,
-                                      alpha_per_target=False, scoring='pearson_r',
+                                      alpha_per_target=alpha_per_target, scoring='pearson_r',
                                       fit_intercept=False)
                 ridge_cv.fit(np.array(feat_tr), np.array(y_tr))
                 best_alpha = ridge_cv.alpha_
