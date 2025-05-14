@@ -2,6 +2,7 @@ import os
 import torch
 import torch.nn as nn
 from collections import OrderedDict
+from torchvision import transforms
 from torchvision.models import (alexnet, AlexNet_Weights,
                                 vgg11, VGG11_Weights,
                                 vgg16, VGG16_Weights,
@@ -85,6 +86,20 @@ model_names_equi = [
 model_names_inv = [
     'MMCR_lmda_00_2', 'SimCLR_lmda_00_1', 'Barlow_lmda_00_1', 
 ]
+
+def get_model_transforms(name, weights):
+    return get_torchvision_transforms(weights)
+
+def get_torchvision_transforms(weights):
+    if weights is not None:
+        img_transforms = weights.transforms()
+    else:
+        img_transforms = [transforms.Resize(size=(224, 224), max_size=None, antialias=True),
+                          transforms.ToTensor(),
+                          transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225))
+                         ]
+        img_transforms = transforms.Compose(img_transforms)
+    return img_transforms
 
 def get_model(name, pretrained=False, device='cuda', **kwargs):
 
@@ -221,6 +236,7 @@ def get_model(name, pretrained=False, device='cuda', **kwargs):
         identifier = name + '|imagenet_trained'
         assert name in model_names_equi + model_names_inv
         model, layers = get_mosaic(name, device=device)
+        weights = None
 
     elif name == 'barlowtwins':
         identifier = name + ('|imagenet_trained' if pretrained else '|untrained')
@@ -244,7 +260,11 @@ def get_model(name, pretrained=False, device='cuda', **kwargs):
     else:
         raise Exception(f'Invalid Model Selection: {name}')
 
-    return model.to(device), layers, identifier
+    try:
+        img_transforms = get_model_transforms(name, weights)
+    except NameError:
+        img_transforms = None
+    return model.to(device), layers, identifier, img_transforms
 
 
 def get_cornet(model_letter, pretrained=False, device='cuda'):
