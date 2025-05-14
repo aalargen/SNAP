@@ -18,6 +18,9 @@ parser.add_argument('-SK', '--SKLEARN', metavar='--SK', type=bool, default=False
 parser.add_argument('-DD', '--DEEPDIVE', metavar='--DD', type=bool, default=False, help='If true, uses deepdive modified ridge regression')
 parser.add_argument('-T', '--TRAINING', metavar='--T', type=bool, default=None, help='If None, uses both trained and untrained. If True, uses only trained.')
 parser.add_argument('-N', '--NUM_SAMPLES', metavar='--N', type=int, default=None, help='If None, uses all available samples. Else, uses a random subset of samples.')
+parser.add_argument('-PCA', '--PCA_FEATURES', metavar='--PCA', type=bool, default=False, help='If true, does PCA on features before evaluation. Else, uses random orthogonal projections.')
+parser.add_argument('-APT', '--ALPHA_PER_TARGET', metavar='--APT', type=bool, default=False, help='If true, each voxel is fit separately during the regression.')
+parser.add_argument('-E', '--EMPIRICAL_ONLY', metavar='--E', type=bool, default=False, help='If true, only does the empirical regression.')
 
 
 parser.add_argument('-BS', '--BATCH_SIZE', metavar='--B', type=int, default=128, help='Batch size for the NSD dataloader')
@@ -38,6 +41,9 @@ sk = args.SKLEARN
 dd = args.DEEPDIVE
 training = args.TRAINING
 num_samples = args.NUM_SAMPLES
+pca = args.PCA_FEATURES
+alpha_per_target = args.ALPHA_PER_TARGET
+empirical_only = args.EMPIRICAL_ONLY
 
 if sk:
     from snap.regression_utils_sklearn import regression_metric
@@ -81,9 +87,7 @@ device = 'cuda'
 
 # Loop through the analyses specified above.
 for region in regionNames:
-    data_loader_neural, images, labels = get_neural_data(region=region,
-                                            loader_kwargs=loader_kwargs,
-                                            data_path=nsd_root, num_samples=num_samples)
+    prev_img_transforms = 'first one'
     for model_name in modelNames:
         print(f'\n\n\nAnalyzing {model_name}')
         for pooling in activation_pooling:
@@ -99,16 +103,27 @@ for region in regionNames:
                 model_kwargs = {'name': model_name,
                                 'pretrained': trained,
                                 'device': device}
-                model, layers, identifier = models.get_model(**model_kwargs)
+                model, layers, identifier, img_transforms = models.get_model(**model_kwargs)
                 model_wrapped = TorchWrapper(model,
                                              layers=layers,
                                              identifier=identifier,
                                              activation_pooling=pooling)
+                
+                # Get the images + brain response with correct transforms (only need if transforms change)
+                if prev_img_transforms != img_transforms:
+                    data_loader_neural, images, labels = get_neural_data(region=region,
+                                                        loader_kwargs=loader_kwargs,
+                                                        data_path=nsd_root, num_samples=num_samples,
+                                                        image_transforms=img_transforms)
+                    prev_img_transforms = img_transforms
 
                 # Create the Experiment Class and pass additional metrics
                 regression_kwargs = {'num_trials': 5,
                                      'reg': reg,
                                      'num_points': 5,
+                                     'with_pca': pca,
+                                     'alpha_per_target': alpha_per_target,
+                                     'empirical_only': empirical_only,
                                      }
 
                 metric_fns = [regression_metric]
@@ -123,7 +138,7 @@ for region in regionNames:
                 # Compute metrics
                 metric_kwargs = {'debug': False,
                                  'epsilon': 1e-14
-                                 } | regression_kwargs
+                                 } | regression_kwargs | model_kwargs
 
                 exp_metrics = exp.compute_metrics(images=images,
                                                   labels=labels,

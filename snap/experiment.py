@@ -71,9 +71,9 @@ class Experiment:
                 self.activations[layer_key] = val[idx]
 
         # Include images and responses as activations as well!
-        self.activations['image_layer'] = images
-        if labels.get('responses') is not None:
-            self.activations['response_layer'] = labels['responses']
+        # self.activations['image_layer'] = images
+        # if labels.get('responses') is not None:
+        #     self.activations['response_layer'] = labels['responses']
 
         # Create the data dictionary to store all metric outputs
         data_dict = {'layers': list(self.activations.keys())}

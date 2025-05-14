@@ -1,8 +1,14 @@
 import numpy as np
 from scipy import optimize
-from sklearn.model_selection import train_test_split
-from sklearn.linear_model import Ridge
+from sklearn.model_selection import train_test_split, KFold, GridSearchCV
+from sklearn.linear_model import Ridge, RidgeCV
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.compose import TransformedTargetRegressor
+from sklearn.pipeline import Pipeline
 from snap.ridge_gcv_mod import RidgeCVMod
+
+import pickle
 
 import torch
 from tqdm import tqdm
@@ -103,8 +109,7 @@ def solve_kappa_gamma(pvals, reg, eigs, weights_sq):
     return np.array(kappa_vals), np.array(gamma_vals), np.array(eff_regs)
 
 
-def gen_error_theory(eigs, weights, reg, pvals=None):
-
+def gen_error_theory(eigs, weights, reg, pvals=None, empirical_only=False):
     # Number of classes
     if len(weights.shape) == 1:
         weights = weights.reshape(-1, 1)
@@ -115,60 +120,78 @@ def gen_error_theory(eigs, weights, reg, pvals=None):
     if pvals is None:
         pvals = [int(.6*P), int(.8*P)]
 
-    # Absolute value of eigs improves numerical stability
-    eigs = np.abs(eigs)
-    weights_sq = (weights**2).sum(-1)
-    alignment = weights**2 / weights_sq.sum()
+    if empirical_only:
+        errors = {'pvals_theory': pvals,
+                'kappa': None,
+                'gamma': None,
+                'eff_regs': np.zeros(3),
+                'E_i': np.zeros((len(pvals), len(eigs))),
+                'gen_theory': np.zeros((len(pvals), C)),
+                'tr_theory': np.zeros((len(pvals), C)),
+                'radius_theory': np.zeros((len(pvals))),
+                'dimension_theory': np.zeros((len(pvals))),
+                'error_modes_theory': np.zeros((len(pvals), P, C)),
+                }
 
-    # Solve for self-consistent equation
-    kappa, gamma, eff_regs = solve_kappa_gamma(pvals, reg, eigs, weights_sq)
+    else:
+        # Absolute value of eigs improves numerical stability
+        eigs = np.abs(eigs)
+        weights_sq = (weights**2).sum(-1)
+        alignment = weights**2 / weights_sq.sum()
 
-    # Calculate generalization and training error
-    prefactor_gen = kappa ** 2 / (1 - gamma)
-    prefactor_tr = eff_regs**2 / kappa**2
+        # Solve for self-consistent equation
+        kappa, gamma, eff_regs = solve_kappa_gamma(pvals, reg, eigs, weights_sq)
 
-    errors = {'pvals_theory': pvals,
-              'kappa': kappa,
-              'gamma': gamma,
-              'eff_regs': eff_regs,
-              'E_i': np.zeros((len(pvals), len(eigs))),
-              'gen_theory': np.zeros((len(pvals), C)),
-              'tr_theory': np.zeros((len(pvals), C)),
-              'radius_theory': np.zeros((len(pvals))),
-              'dimension_theory': np.zeros((len(pvals))),
-              'error_modes_theory': np.zeros((len(pvals), P, C)),
-              }
+        # Calculate generalization and training error
+        prefactor_gen = kappa ** 2 / (1 - gamma)
+        prefactor_tr = eff_regs**2 / kappa**2
 
-    for i, p in enumerate(pvals):
-        E_i = prefactor_gen[i] * (1 / (p*eigs + kappa[i])**2)
-        error_mode = E_i[:, None] * alignment 
+        errors = {'pvals_theory': pvals,
+                'kappa': kappa,
+                'gamma': gamma,
+                'eff_regs': eff_regs,
+                'E_i': np.zeros((len(pvals), len(eigs))),
+                'gen_theory': np.zeros((len(pvals), C)),
+                'tr_theory': np.zeros((len(pvals), C)),
+                'radius_theory': np.zeros((len(pvals))),
+                'dimension_theory': np.zeros((len(pvals))),
+                'error_modes_theory': np.zeros((len(pvals), P, C)),
+                }
 
-        for j in range(C):
-            # Normalize by L2 norm of target
-            gen_err = (error_mode[:, j]).sum() # total error per voxel
-            tr_err = prefactor_tr[i] * gen_err
+        for i, p in enumerate(pvals):
+            E_i = prefactor_gen[i] * (1 / (p*eigs + kappa[i])**2)
+            error_mode = E_i[:, None] * alignment 
 
-            errors['gen_theory'][i, j] = gen_err
-            errors['tr_theory'][i, j] = tr_err
+            for j in range(C):
+                # Normalize by L2 norm of target
+                gen_err = (error_mode[:, j]).sum() # total error per voxel
+                tr_err = prefactor_tr[i] * gen_err
+
+                errors['gen_theory'][i, j] = gen_err
+                errors['tr_theory'][i, j] = tr_err
+                
+            errors['E_i'][i] = E_i
+            errors['error_modes_theory'][i] = error_mode
             
-        errors['E_i'][i] = E_i
-        errors['error_modes_theory'][i] = error_mode
-        
-        # find radius and dimension
-        sum_sq_err_modes = np.square(error_mode).sum()
-        sum_err_modes_sq = np.square(errors['gen_theory'][i].sum(-1))
-        radius = np.sqrt(sum_sq_err_modes)
-        dimension = sum_err_modes_sq/sum_sq_err_modes
-        
-        errors['radius_theory'][i] = radius
-        errors['dimension_theory'][i] = dimension
+            # find radius and dimension
+            sum_sq_err_modes = np.square(error_mode).sum()
+            sum_err_modes_sq = np.square(errors['gen_theory'][i].sum(-1))
+            radius = np.sqrt(sum_sq_err_modes)
+            dimension = sum_err_modes_sq/sum_sq_err_modes
+            
+            errors['radius_theory'][i] = radius
+            errors['dimension_theory'][i] = dimension
 
     return errors
 
 
 @torch.no_grad()
 def regression(feat, y, pvals=None, cent=False, 
-               num_trials=3, reg=None, alpha_per_target=False, **kwargs):
+               num_trials=3, reg=None, alpha_per_target=False, 
+               scoring='explained_variance', with_pca=True, 
+               scale_feats=True, scale_y=True,
+               n_folds=5, random_state=0, layer=None,
+               name=None, pretrained=None, **kwargs):
 
     P, N = feat.shape
     C = y.shape[-1]
@@ -179,15 +202,21 @@ def regression(feat, y, pvals=None, cent=False,
         pvals = [pvals]
 
     if cent:
-        y -= y.mean(0, keepdim=True)
-        feat -= feat.mean(0, keepdim=True)
+        with_mean = True
+    else:
+        with_mean = False
+
+    if alpha_per_target:
+        err_reg = np.zeros((len(pvals), y.shape[1]))
+    else:
+        err_reg = np.zeros(len(pvals))
 
     errors = {'pvals': pvals,
               'P': P,
               'N': N,
               'C': C,
               'cent': cent,
-              'reg': np.zeros(len(pvals)), 
+              'reg': err_reg, 
 
               'gen_errs': np.zeros((num_trials, len(pvals), C)),
               'tr_errs': np.zeros((num_trials, len(pvals), C)),
@@ -218,7 +247,7 @@ def regression(feat, y, pvals=None, cent=False,
         best_alpha = None
         for j in range(num_trials):
 
-            idx, idx_test = train_test_split(np.arange(0, P, 1), train_size=p)
+            idx, idx_test = train_test_split(np.arange(0, P, 1), train_size=p, random_state=random_state)
             assert len(set(idx)) == p
             assert len(set(idx_test)) == P - p
 
@@ -226,26 +255,84 @@ def regression(feat, y, pvals=None, cent=False,
             y_test = y[idx_test]
             feat_tr = feat[idx]
 
-            #if first trial, use RidgeCV to get an alpha
+            feat_scaler = StandardScaler(with_mean=(with_mean and scale_feats), 
+                                         with_std=scale_feats)
             if best_alpha is None:
-                ridge_cv = RidgeCVMod(alphas=alphas, store_cv_values=False,
-                                      alpha_per_target=alpha_per_target, scoring='pearson_r',
-                                      fit_intercept=False)
-                ridge_cv.fit(np.array(feat_tr), np.array(y_tr))
-                best_alpha = ridge_cv.alpha_
-                print(f'\n N: {N}, p: {p}, Best Alpha: {best_alpha}')
+                ridge_reg = Ridge()
+            else:
+                ridge_reg = Ridge(alpha=best_alpha)
+
+            if with_pca:
+                pca_file_name = f'model_{name}_pretrained_{pretrained}_layer_{layer}_p_{p}_cent_{cent}_scaled_{scale_feats}'
+                print(pca_file_name)
+                path = f'/mnt/home/alargen/SNAP/snap_analysis_data/pca_decomps/{pca_file_name}'
+                if os.path.isfile(path):
+                    with open(path, "rb") as f:
+                        all_feat = pickle.load(f)
+                        feat_tr = all_feat[idx]
+                else:
+                    norm_feat_tr = feat_scaler.fit_transform(feat_tr)
+                    norm_feat = feat_scaler.transform(feat)
+
+                    pca = PCA(n_components=p)
+                    feat_tr = pca.fit_transform(norm_feat_tr)
+                    all_feat = pca.transform(norm_feat)
+                    with open(path, 'wb') as f:
+                        pickle.dump(all_feat, f)
+
+                pipeline = Pipeline([
+                    ('ridge', ridge_reg)
+                ])
+            else:
+                pipeline = Pipeline([
+                    ('feat_scaler', feat_scaler),
+                    ('ridge', ridge_reg)
+                ])
+                all_feat = feat
+
+            y_scaler = StandardScaler(with_mean=(with_mean and scale_y), 
+                                      with_std=scale_y)
+            regr = TransformedTargetRegressor(regressor=pipeline,
+                                              transformer=y_scaler)
+
+            if best_alpha is None: # need to search for good alpha
+                param_grid = {'regressor__ridge__alpha': alphas}
+                shuffle = not alpha_per_target # don't want folds to be different when fitting to each voxel
+                if shuffle:
+                    kf = KFold(n_splits=n_folds, shuffle=shuffle, random_state=random_state)
+                else:
+                    kf = KFold(n_splits=n_folds, shuffle=shuffle)
+                gs = GridSearchCV(regr, param_grid, cv=kf, scoring=scoring, n_jobs=-1)
+
+                if alpha_per_target: # pipeline doesn't corretly handle RidgeCV (or generally EstimatorCV)
+                    best_alpha = torch.zeros(y.shape[1]) # one per voxel
+                    y_hat = torch.zeros_like(y) # each col is a voxel
+
+                    for y_idx in range(y.shape[1]):
+                        single_y_tr = y_tr[:, y_idx]
+                        
+                        gs.fit(np.array(feat_tr), np.array(single_y_tr))
+                        best_alpha[y_idx] = gs.best_params_['regressor__ridge__alpha']
+
+                        single_y_hat = torch.from_numpy(gs.predict(np.array(all_feat)))
+                        y_hat[:, y_idx] = single_y_hat
+                    best_alpha = best_alpha.numpy()
+
+                else:
+                    gs.fit(np.array(feat_tr), np.array(y_tr))
+                    best_alpha = gs.best_params_['regressor__ridge__alpha']
+                    
+                    y_hat = torch.from_numpy(gs.predict(np.array(all_feat)))
+
+                print(f'\n N: {N}, p: {p}, Best Alpha: {best_alpha}, with pca: {with_pca}, feat_scaler: {feat_scaler}')
                 errors['reg'][i] = best_alpha/p
 
-                y_hat = torch.from_numpy(ridge_cv.predict(np.array(feat)))
-                del ridge_cv
+                del gs, kf, param_grid
 
-            else:
-                #sklearn ridge regression
-                ridge_regression = Ridge(alpha=best_alpha)
-                ridge_regression.fit(np.array(feat_tr), np.array(y_tr))
+            else: #have alpha, do regression as normal
+                regr.fit(np.array(feat_tr), np.array(y_tr))
 
-                y_hat = torch.from_numpy(ridge_regression.predict(np.array(feat)))
-                del ridge_regression
+                y_hat = torch.from_numpy(regr.predict(np.array(all_feat)))
 
             y_hat_tr = y_hat[idx]
             y_hat_test = y_hat[idx_test]
@@ -292,14 +379,17 @@ def regression(feat, y, pvals=None, cent=False,
             errors['pearson_test'][j, i] = pearson_test.cpu().numpy()
             errors['pearson_gen'][j, i] = pearson_gen.cpu().numpy()
 
-    feat, feat_tr, y = 0, 0, 0
+    del feat, feat_tr, all_feat #, norm_feat, norm_feat_tr, feat_pca, feat_tr_pca
+    del y, y_tr, y_test, y_hat, y_hat_tr, y_hat_test # norm_y, norm_y_tr, norm_y_test,
+    del regr
+    # feat, feat_tr, y = 0, 0, 0
     torch.cuda.empty_cache()
 
     return errors
 
 
 @torch.no_grad()
-def regression_metric(activations, labels, spectrum_dict, cent=True, uncent=False, **kwargs):
+def regression_metric(activations, labels, spectrum_dict, cent=True, uncent=False, empirical_only=False, **kwargs):
 
     assert type(labels) is dict, "labels should be provided as a dict (e.g. {'classes': classes})"
     assert labels.get('responses') is not None
@@ -312,10 +402,10 @@ def regression_metric(activations, labels, spectrum_dict, cent=True, uncent=Fals
                 # Uncentered regression
                 eigs = spectrum_dict['uncent'][layer_key]['eigs']
                 weights = spectrum_dict['uncent'][layer_key]['weights'][label_key]
-                errors = regression(layer_act, y, cent=False, **kwargs)
+                errors = regression(layer_act, y, cent=False, layer=layer_key, **kwargs)
                 reg = errors['reg']
                 pvals = errors['pvals']
-                theory = gen_error_theory(eigs, weights, reg, pvals=pvals)
+                theory = gen_error_theory(eigs, weights, reg, pvals=pvals, empirical_only=empirical_only)
                 errors |= theory
                 reg_responses_uncent[layer_key][label_key] = errors
 
@@ -323,10 +413,10 @@ def regression_metric(activations, labels, spectrum_dict, cent=True, uncent=Fals
                 # Centered regression
                 eigs = spectrum_dict['cent'][layer_key]['eigs']
                 weights = spectrum_dict['cent'][layer_key]['weights'][label_key]
-                errors = regression(layer_act, y, cent=True, **kwargs)
+                errors = regression(layer_act, y, cent=True, layer=layer_key, **kwargs)
                 reg = errors['reg']
                 pvals = errors['pvals']
-                theory = gen_error_theory(eigs, weights, reg, pvals=pvals)
+                theory = gen_error_theory(eigs, weights, reg, pvals=pvals, empirical_only=empirical_only)
                 errors |= theory
                 reg_responses_cent[layer_key][label_key] = errors
 
