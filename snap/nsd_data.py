@@ -155,7 +155,7 @@ def get_roi_indices(metadata, all_rois, roi_subset=None, row_number=False):
 def get_neural_data(region=None, loader_kwargs=None, image_transforms=None,
                     data_path=None, dataset='response', num_samples=None, 
                     num_voxels=None, shuffle_images=False, random_voxels=False,
-                    subj_subset=[1, 2, 5, 7]):
+                    subj_subset=[1, 2, 5, 7], min_ncsnr=0.2):
    """
    Args:
       region (list of str),
@@ -197,7 +197,7 @@ def get_neural_data(region=None, loader_kwargs=None, image_transforms=None,
    assert set(subj_subset).issubset({1, 2, 5, 7}), f'{subj_subset} contains one or more subjects not included in the data'
    
    response_data, stimulus_data, _ = get_nsd(data_path, region, subj_subset, dataset, 
-                                             num_samples, num_voxels, random_voxels)
+                                             num_samples, num_voxels, random_voxels, min_ncsnr)
 
    if loader_kwargs is None:
       loader_kwargs = {'batch_size': 128,
@@ -231,7 +231,7 @@ def get_neural_data(region=None, loader_kwargs=None, image_transforms=None,
    
 
 def get_nsd(data_path, region=None, subj_subset=[1, 2, 5, 7], dataset='response', 
-            num_samples=None, num_voxels=None, random_voxels=False,):
+            num_samples=None, num_voxels=None, random_voxels=False, min_ncsnr=0.2):
    """
    returns dataframes with NSD data inside
    Adapted from DeepNSD GitHub repo
@@ -244,15 +244,15 @@ def get_nsd(data_path, region=None, subj_subset=[1, 2, 5, 7], dataset='response'
    
    image_set = 'shared1000'
 
-   stimulus_path = f'{path_dir}/stimulus/{image_set}.csv'
+   stimulus_path = os.path.join(path_dir, f'stimulus/{image_set}.csv')
    image_root = os.path.join(path_dir, 'stimulus', image_set)
 
    response_path = {}
    metadata_path = {}
    path_set = [stimulus_path]
    for vset in ['EVC','OTC']:
-      response_path[vset] = f'{path_dir}/response/{image_set}_{vset}/voxel_betas.csv'
-      metadata_path[vset] = f'{path_dir}/response/{image_set}_{vset}/voxel_metas.csv'
+      response_path[vset] = os.path.join(path_dir, f'response/{image_set}_{vset}/voxel_betas.csv')
+      metadata_path[vset] = os.path.join(path_dir, f'response/{image_set}_{vset}/voxel_metas.csv')
       path_set += [response_path[vset], metadata_path[vset]]
       
    if not all([os.path.exists(path) for path in path_set]):
@@ -267,7 +267,6 @@ def get_nsd(data_path, region=None, subj_subset=[1, 2, 5, 7], dataset='response'
    metadata = load_data(metadata_path)
    stimulus_data = load_pandas(stimulus_path)
    n_stimuli = len(stimulus_data)
-   print(f'Number of images: {n_stimuli}')
 
    stimulus_data['image_path'] = image_root + '/' + stimulus_data.image_name
 
@@ -288,7 +287,7 @@ def get_nsd(data_path, region=None, subj_subset=[1, 2, 5, 7], dataset='response'
       response_data = response_data.loc[:, samples]
 
    # Reliability selection
-   metadata = metadata[metadata['ncsnr'] > 0.2]
+   metadata = metadata[metadata['ncsnr'] > min_ncsnr]
 
    # ROI + subject selection
    roi_indices = get_roi_indices(metadata, all_rois, roi_subset=region)

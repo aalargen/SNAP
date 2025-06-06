@@ -110,30 +110,30 @@ def solve_kappa_gamma(pvals, reg, eigs, weights_sq):
 
 
 def gen_error_theory(eigs, weights, reg, pvals=None, empirical_only=False):
-    # Number of classes
-    if len(weights.shape) == 1:
-        weights = weights.reshape(-1, 1)
-    C = weights.shape[-1]
-
-    # Sample size for theory
-    P = eigs.shape[0]
-    if pvals is None:
-        pvals = [int(.6*P), int(.8*P)]
 
     if empirical_only:
         errors = {'pvals_theory': pvals,
                 'kappa': None,
                 'gamma': None,
-                'eff_regs': np.zeros(3),
-                'E_i': np.zeros((len(pvals), len(eigs))),
-                'gen_theory': np.zeros((len(pvals), C)),
-                'tr_theory': np.zeros((len(pvals), C)),
-                'radius_theory': np.zeros((len(pvals))),
-                'dimension_theory': np.zeros((len(pvals))),
-                'error_modes_theory': np.zeros((len(pvals), P, C)),
+                'eff_regs': None,
+                'E_i': None,
+                'gen_theory': None,
+                'tr_theory': None,
+                'radius_theory': None,
+                'dimension_theory': None,
+                'error_modes_theory': None,
                 }
 
     else:
+        # Number of classes
+        if len(weights.shape) == 1:
+            weights = weights.reshape(-1, 1)
+        C = weights.shape[-1]
+
+        # Sample size for theory
+        P = eigs.shape[0]
+        if pvals is None:
+            pvals = [int(.6*P), int(.8*P)]
         # Absolute value of eigs improves numerical stability
         eigs = np.abs(eigs)
         weights_sq = (weights**2).sum(-1)
@@ -181,6 +181,7 @@ def gen_error_theory(eigs, weights, reg, pvals=None, empirical_only=False):
             
             errors['radius_theory'][i] = radius
             errors['dimension_theory'][i] = dimension
+        print(f'E_i sum: {errors["E_i"].sum(-1).sum(-1)}')
 
     return errors
 
@@ -247,7 +248,7 @@ def regression(feat, y, pvals=None, cent=False,
         best_alpha = None
         for j in range(num_trials):
 
-            idx, idx_test = train_test_split(np.arange(0, P, 1), train_size=p, random_state=random_state)
+            idx, idx_test = train_test_split(np.arange(0, P, 1), train_size=p, random_state=j)
             assert len(set(idx)) == p
             assert len(set(idx_test)) == P - p
 
@@ -263,8 +264,7 @@ def regression(feat, y, pvals=None, cent=False,
                 ridge_reg = Ridge(alpha=best_alpha)
 
             if with_pca:
-                pca_file_name = f'model_{name}_pretrained_{pretrained}_layer_{layer}_p_{p}_cent_{cent}_scaled_{scale_feats}'
-                print(pca_file_name)
+                pca_file_name = f'model_{name}_pretrained_{pretrained}_layer_{layer}_p_{p}_cent_{cent}_scaled_{scale_feats}_trial_{j}'
                 path = f'/mnt/home/alargen/SNAP/snap_analysis_data/pca_decomps/{pca_file_name}'
                 if os.path.isfile(path):
                     with open(path, "rb") as f:
@@ -318,13 +318,17 @@ def regression(feat, y, pvals=None, cent=False,
                         y_hat[:, y_idx] = single_y_hat
                     best_alpha = best_alpha.numpy()
 
+                    print_alpha = (min(best_alpha), max(best_alpha))
+
                 else:
                     gs.fit(np.array(feat_tr), np.array(y_tr))
                     best_alpha = gs.best_params_['regressor__ridge__alpha']
                     
                     y_hat = torch.from_numpy(gs.predict(np.array(all_feat)))
 
-                print(f'\n N: {N}, p: {p}, Best Alpha: {best_alpha}, with pca: {with_pca}, feat_scaler: {feat_scaler}')
+                    print_alpha = best_alpha
+
+                print(f'\n N: {N}, p: {p}, Best Alpha: {print_alpha}, with pca: {with_pca}, feat_scaler: {feat_scaler}')
                 errors['reg'][i] = best_alpha/p
 
                 del gs, kf, param_grid
@@ -400,8 +404,12 @@ def regression_metric(activations, labels, spectrum_dict, cent=True, uncent=Fals
         for label_key, y in labels.items():
             if uncent:
                 # Uncentered regression
-                eigs = spectrum_dict['uncent'][layer_key]['eigs']
-                weights = spectrum_dict['uncent'][layer_key]['weights'][label_key]
+                if not empirical_only:
+                    eigs = spectrum_dict['uncent'][layer_key]['eigs']
+                    weights = spectrum_dict['uncent'][layer_key]['weights'][label_key]
+                else:
+                    eigs = None
+                    weights = None
                 errors = regression(layer_act, y, cent=False, layer=layer_key, **kwargs)
                 reg = errors['reg']
                 pvals = errors['pvals']
@@ -411,8 +419,12 @@ def regression_metric(activations, labels, spectrum_dict, cent=True, uncent=Fals
 
             if cent:
                 # Centered regression
-                eigs = spectrum_dict['cent'][layer_key]['eigs']
-                weights = spectrum_dict['cent'][layer_key]['weights'][label_key]
+                if not empirical_only:
+                    eigs = spectrum_dict['cent'][layer_key]['eigs']
+                    weights = spectrum_dict['cent'][layer_key]['weights'][label_key]
+                else:
+                    eigs = None
+                    weights = None
                 errors = regression(layer_act, y, cent=True, layer=layer_key, **kwargs)
                 reg = errors['reg']
                 pvals = errors['pvals']

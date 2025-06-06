@@ -14,7 +14,6 @@ parser.add_argument('-R', '--REGIONS', metavar='--R', type=str, default='Early V
 parser.add_argument('-A', '--ACTIVATION_POOLING', metavar='--A', type=list, default=[None], help='List of activation pooling methods to use')
 parser.add_argument('-P', '--RANDOM_PROJECTION_DIM', metavar='--P', type=int, default=None, help='Number of dimensions to project neural data to')
 parser.add_argument('-REG', '--REGULARIZATION', metavar='--REG', type=float, default=None, help='Regularization parameter to use in regression')
-parser.add_argument('-SK', '--SKLEARN', metavar='--SK', type=bool, default=False, help='If true, uses sklearn ridge regression')
 parser.add_argument('-DD', '--DEEPDIVE', metavar='--DD', type=bool, default=False, help='If true, uses deepdive modified ridge regression')
 parser.add_argument('-T', '--TRAINING', metavar='--T', type=bool, default=None, help='If None, uses both trained and untrained. If True, uses only trained.')
 parser.add_argument('-N', '--NUM_SAMPLES', metavar='--N', type=int, default=None, help='If None, uses all available samples. Else, uses a random subset of samples.')
@@ -28,7 +27,7 @@ parser.add_argument('-SH', '--SHUFFLE', metavar='--SH', type=bool, default=False
 parser.add_argument('-W', '--WORKERS', metavar='--W', type=int, default=4, help='The number of CPUs being used')
 
 parser.add_argument('-S', '--SAVE_LOC', metavar='--S', type=str, default='/mnt/ceph/users/alargen/small_nsd/snap_data/reg_0', help='Location to save the data to')
-parser.add_argument('-D', '--DATA', metavar='--D', type=str, default='/mnt/ceph/users/alargen/small_nsd/', help='Path to the preprocessed NSD data')
+parser.add_argument('-D', '--DATA', metavar='--D', type=str, default='/mnt/ceph/users/alargen/small_nsd/DeepJuiceDev/juicyfruits/nsd_subset', help='Path to the preprocessed NSD data')
 
 args=parser.parse_args()
 
@@ -37,7 +36,6 @@ regionNames = args.REGIONS.split(',')
 activation_pooling = args.ACTIVATION_POOLING
 rand_proj_dim = args.RANDOM_PROJECTION_DIM
 reg = args.REGULARIZATION
-sk = args.SKLEARN
 dd = args.DEEPDIVE
 training = args.TRAINING
 num_samples = args.NUM_SAMPLES
@@ -45,9 +43,7 @@ pca = args.PCA_FEATURES
 alpha_per_target = args.ALPHA_PER_TARGET
 empirical_only = args.EMPIRICAL_ONLY
 
-if sk:
-    from snap.regression_utils_sklearn import regression_metric
-elif dd:
+if dd:
     from snap.regression_utils_dd import regression_metric
 else:
     from snap.regression_utils import regression_metric
@@ -59,7 +55,7 @@ elif training:
 else:
     training = [False]
 
-if (reg is None) and not (sk or dd):
+if (reg is None) and not dd:
     reg = 1e-14
 
 batch_size = args.BATCH_SIZE
@@ -114,7 +110,7 @@ for region in regionNames:
                     data_loader_neural, images, labels = get_neural_data(region=region,
                                                         loader_kwargs=loader_kwargs,
                                                         data_path=nsd_root, num_samples=num_samples,
-                                                        image_transforms=img_transforms)
+                                                        image_transforms=img_transforms, subj_subset=[1])
                     prev_img_transforms = img_transforms
 
                 # Create the Experiment Class and pass additional metrics
